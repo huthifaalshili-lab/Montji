@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "hudifamoosa2007@gmail.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId && (incoming().role != 'admin' || isAdmin());
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && (incoming().role == existing().role || isAdmin());
+      allow delete: if isAdmin();
+
+      // User Wishlist Subcollection
+      match /wishlist/{productId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // User Custom Awni Folders Subcollection
+      match /awniFolders/{folderId} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+
+      // User Saved Awni Conversations Subcollection
+      match /awniConversations/{conversationId} {
+        allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      }
+    }
+
+    // Products Collection (Public marketplace catalog)
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isSignedIn() && (isAdmin() || incoming().sellerId == request.auth.uid);
+      allow update: if isSignedIn() && (isAdmin() || existing().sellerId == request.auth.uid);
+      allow delete: if isSignedIn() && (isAdmin() || existing().sellerId == request.auth.uid);
+
+      // Product Reviews Subcollection (Public read, authenticated or guest review creation with validation)
+      match /reviews/{reviewId} {
+        allow read: if true;
+        allow create: if incoming().rating >= 1 && incoming().rating <= 5 &&
+                         incoming().comment is string && incoming().comment.size() <= 1000 &&
+                         incoming().userName is string && incoming().userName.size() <= 100;
+        allow update: if (incoming().diff(existing()).affectedKeys().hasOnly(['helpfulCount'])) ||
+                         (isSignedIn() && (existing().userId == request.auth.uid || isAdmin()));
+        allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      }
+    }
+
+    // Orders Collection
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (isAdmin() || (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status'])));
+      allow delete: if isAdmin();
+    }
+
+    // Project Ratings & Investor Evaluations Collection
+    match /projectRatings/{ratingId} {
+      allow read: if true;
+      allow create: if incoming().rating >= 1 && incoming().rating <= 5 &&
+                       incoming().projectId is string &&
+                       incoming().evaluatorName is string &&
+                       incoming().comment is string;
+      allow update: if (incoming().diff(existing()).affectedKeys().hasOnly(['helpfulCount'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Admins Collection
+    match /admins/{userId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
